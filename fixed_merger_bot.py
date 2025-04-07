@@ -21,7 +21,7 @@ FIRST_IMAGE, SECOND_IMAGE, NAME, SETTINGS, CUSTOM_SPACING, SPACING_INPUT, PRESET
 user_data = {}
 
 # Config parameters
-REF_IMAGE_SIZE = 400  # Size of reference image (400x400 pixels)
+REF_IMAGE_SIZE = 340  # Size of reference image (400x400 pixels)
 FONT_SIZE = 48  # Font size
 BOTTOM_MARGIN = 10  # Margin from bottom in pixels
 
@@ -960,6 +960,30 @@ async def process_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         # Resize reference image to REF_IMAGE_SIZE x REF_IMAGE_SIZE
         ref_img = ref_img.resize((REF_IMAGE_SIZE, REF_IMAGE_SIZE))
         
+        # Create a circular mask for the reference image (50% rounded corners)
+        mask = Image.new('L', (REF_IMAGE_SIZE, REF_IMAGE_SIZE), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.ellipse((0, 0, REF_IMAGE_SIZE, REF_IMAGE_SIZE), fill=255)
+        
+        # Apply the circular mask to the reference image
+        if has_transparency:
+            # For images with transparency, we need to update the alpha channel
+            # Get the original alpha channel
+            alpha = ref_img.split()[3]
+            # Apply the circular mask to the alpha channel
+            new_alpha = Image.composite(alpha, Image.new('L', alpha.size, 0), mask)
+            # Update the alpha channel
+            r, g, b, _ = ref_img.split()
+            ref_img = Image.merge('RGBA', (r, g, b, new_alpha))
+        else:
+            # For RGB images, create new image with transparency
+            circular_img = Image.new('RGBA', ref_img.size, (0, 0, 0, 0))
+            # Paste using the mask
+            circular_img.paste(ref_img, (0, 0), mask)
+            ref_img = circular_img
+            # Since we added transparency, update the flag
+            has_transparency = True
+        
         # Get spacing settings from user data
         spacing = user_data[user.id]['spacing']
         
@@ -981,11 +1005,21 @@ async def process_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             result = Image.new('RGBA', main_img.size, (0, 0, 0, 0))
             # Paste main image first
             result.paste(main_img, (0, 0), main_img if main_img.mode == 'RGBA' else None)
-            # Paste reference image with alpha channel at the calculated position
+            # Paste circular reference image with alpha channel at the calculated position
             result.paste(ref_img, (x_position, y_position), ref_img)
             main_img = result
         else:
-            main_img.paste(ref_img, (x_position, y_position))
+            # Convert main image to RGBA to handle the circular reference image
+            main_img = main_img.convert("RGBA")
+            # Create a new transparent image
+            result = Image.new('RGBA', main_img.size, (0, 0, 0, 0))
+            # Paste main image first
+            result.paste(main_img, (0, 0))
+            # Paste circular reference image with alpha channel at the calculated position
+            result.paste(ref_img, (x_position, y_position), ref_img)
+            main_img = result
+            # Update transparency flag
+            has_transparency = True
         
         # Add text
         draw = ImageDraw.Draw(main_img)
